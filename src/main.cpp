@@ -196,6 +196,11 @@ struct MyApp : public DistributedApp {  // use simple app if not distributed
 
   void onAnimate(double dt) override { 
     scene.update(dt); 
+
+    if (!isPrimary()) {
+      // Rotate camera around Y axis for non-primary nodes
+      nav().turnU(dt * 18.f / 60.f); // turnU rotates around up vector (Y axis)
+    }
   }
 
   void onDraw(Graphics& g) override {
