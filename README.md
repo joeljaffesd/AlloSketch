@@ -1,5 +1,5 @@
-# AlloLib-kickstart
-Plug-n-Play Build Env for AlloLib Projects
+# AlloSketch
+Quick Allo Project for Summer 2025 Sphere Demo
 
 ## Using
 1. Clone project and get [AlloLib's dependencies](https://github.com/AlloSphere-Research-Group/allolib/blob/main/readme.md)
