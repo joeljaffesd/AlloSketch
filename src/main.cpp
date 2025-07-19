@@ -154,7 +154,12 @@ struct MyApp : public DistributedApp {  // use simple app if not distributed
   }
 
   void onCreate() override {
-    nav().pos(0, 0, 10);
+    if (isPrimary()) {
+      nav().pos(0, 0, 10);
+    } else {
+      nav().pos(0.101748, 0, 1.15022);
+      // nav().pos(-0.0081142, -0.0123074, 0.973139); // alt
+    }
   }
 
   // TODO
@@ -208,6 +213,9 @@ struct MyApp : public DistributedApp {  // use simple app if not distributed
           mAttractor->setMode(3);
         }
       }
+    }
+    if (k.key() == 'p') {
+      std::cout << "Position: " << this->nav().pos() << std::endl;
     }
     return true;
   }
