@@ -33,6 +33,8 @@
 #include "al/ui/al_Parameter.hpp"
 using namespace al;
 
+#include "../gimmel/include/gimmel.hpp"
+
 class Attractor : public PositionedVoice {
 private:
   static const int P = 15, D = 10;
@@ -147,6 +149,8 @@ struct MyApp : public DistributedApp {  // use simple app if not distributed
   DistributedScene scene;
   Attractor* mAttractor = nullptr;
 
+  giml::Vactrol<float> mVactrol{SAMPLE_RATE};
+
   void onInit() override {
     scene.registerSynthClass<Attractor>();
     scene.verbose(true);
@@ -163,7 +167,32 @@ struct MyApp : public DistributedApp {  // use simple app if not distributed
   }
 
   // TODO
-  void onSound(AudioIOData& io) override {}
+  void onSound(AudioIOData& io) override {
+    if (isPrimary()) {
+      for (auto sample = 0; sample < io.framesPerBuffer(); sample++) {
+        float in = io.in(0, sample);
+        float rectfied = abs(in);
+        float filtered = mVactrol(rectfied);
+
+        // "double warp"
+        filtered = std::log10((filtered * 9.0f) + 1.0f); // basic curve 
+        filtered = std::sqrt(filtered);  // ^0.5, general form is ^(1 / sensitivity)
+
+
+        // float scaled = giml::scale(filtered, 0, 1, 0.0, 0.007); // map to frequency range
+        if (mAttractor) {
+          auto params = mAttractor->parameters();
+          for (auto param : params) {
+            if (param->getName() == std::string("h")) {
+              auto param_cast = dynamic_cast<Parameter*>(param);
+              float scaledFor_h = giml::scale(filtered, 0, 1, 0.0, 0.007); // map to frequency range
+              *param_cast = scaledFor_h;
+            }
+          }
+        }
+      }
+    }
+  }
 
   void onAnimate(double dt) override { 
     scene.update(dt); 
