@@ -166,7 +166,6 @@ struct MyApp : public DistributedApp {  // use simple app if not distributed
     }
   }
 
-  // TODO
   void onSound(AudioIOData& io) override {
     if (isPrimary()) {
       for (auto sample = 0; sample < io.framesPerBuffer(); sample++) {
@@ -189,6 +188,16 @@ struct MyApp : public DistributedApp {  // use simple app if not distributed
               *param_cast = scaledFor_h;
             }
           }
+        }
+
+        // "multi-stereo" output
+        for (auto channel = 0; channel < io.channelsOut(); channel++) {
+          if (channel % 2 == 0) {
+            io.out(channel, sample) = io.in(0, sample);
+          } else {
+            io.out(channel, sample) = io.in(1, sample);
+          }
+          
         }
       }
     }
