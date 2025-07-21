@@ -6,6 +6,8 @@ This demonstrates how to distribute texture data across nodes using POD state.
 The primary node manipulates texture data and pushes it to the state, while
 secondary nodes read the texture from state and display it.
 
+Joel A. Jaffe, July 2025
+
 Modified from Frame Feedback example by:
 Lance Putnam, Nov. 2014
 Keehong Youn, 2017
@@ -17,12 +19,15 @@ Keehong Youn, 2017
 #include "al/graphics/al_Texture.hpp"
 #include "al_ext/statedistribution/al_CuttleboneDomain.hpp"
 #include "al_ext/statedistribution/al_CuttleboneStateSimulationDomain.hpp"
-
 using namespace al;
 
+#ifndef RESOLUTION
+#define RESOLUTION 1080
+#endif
+
 // Define texture dimensions (must be reasonable size for network transmission)
-constexpr int TEX_WIDTH = 32;
-constexpr int TEX_HEIGHT = 32;
+constexpr int TEX_WIDTH = RESOLUTION;
+constexpr int TEX_HEIGHT = RESOLUTION;
 constexpr int TEX_SIZE = TEX_WIDTH * TEX_HEIGHT * 3; // RGB format
 
 // POD state struct for networked texture data
