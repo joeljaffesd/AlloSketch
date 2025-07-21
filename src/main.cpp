@@ -64,6 +64,10 @@ private:
 
 public:
 
+  void audioInput(float value) {
+    this->p[1] = value;
+  }
+
   void init() override {
     for (int i = 0; i < P; i++) {
       this->registerParameter(p[i]);
