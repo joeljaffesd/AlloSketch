@@ -3,7 +3,7 @@
 // to work distributed and with real-time audio input
 
 // Single macro to switch between desktop and Allosphere configurations
-#define DESKTOP
+// #define DESKTOP
 
 #ifdef DESKTOP
   // Desktop configuration
