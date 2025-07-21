@@ -21,8 +21,8 @@ Keehong Youn, 2017
 using namespace al;
 
 // Define texture dimensions (must be reasonable size for network transmission)
-constexpr int TEX_WIDTH = 128;
-constexpr int TEX_HEIGHT = 128;
+constexpr int TEX_WIDTH = 32;
+constexpr int TEX_HEIGHT = 32;
 constexpr int TEX_SIZE = TEX_WIDTH * TEX_HEIGHT * 3; // RGB format
 
 // POD state struct for networked texture data
@@ -49,6 +49,9 @@ struct MyApp : public DistributedAppWithState<TextureState> {
   }
 
   void onCreate() override {
+    // Debug output
+    std::cout << "Node started as: " << (isPrimary() ? "PRIMARY" : "SECONDARY") << std::endl;
+    
     // Create a colored square
     shape.primitive(Mesh::LINE_LOOP);
     const int N = 4;
@@ -71,6 +74,7 @@ struct MyApp : public DistributedAppWithState<TextureState> {
       state().textureNeedsUpdate = false;
       state().frameCounter = 0;
       generateTextureData();
+      std::cout << "Primary: Initial texture generated" << std::endl;
     }
   }
 
@@ -122,6 +126,12 @@ struct MyApp : public DistributedAppWithState<TextureState> {
     }
     
     state().textureNeedsUpdate = true;
+    
+    // Debug output
+    if (isPrimary()) {
+      std::cout << "Primary: Generated texture at frame " << state().frameCounter 
+                << " time=" << state().time << " angle=" << state().angle << std::endl;
+    }
   }
 
   void onAnimate(double dt_sec) override {
@@ -133,15 +143,23 @@ struct MyApp : public DistributedAppWithState<TextureState> {
       
       // Generate new texture data periodically
       state().frameCounter++;
-      if (state().frameCounter % 6 == 0) { // Update every 6 frames (~10 FPS at 60 FPS)
+      if (state().frameCounter % 30 == 0) { // Update every 30 frames (~0.5 seconds at 60 FPS)
         generateTextureData();
       }
     }
     
-    // Update distributed texture on all nodes when needed
-    if (state().textureNeedsUpdate) {
+    // Always update distributed texture on all nodes when data changes
+    // Check if texture data has changed by comparing frame counter
+    static int lastFrameCounter = -1;
+    if (state().frameCounter != lastFrameCounter) {
       distributedTexture.submit(state().textureData, GL_RGB, GL_UNSIGNED_BYTE);
-      state().textureNeedsUpdate = false;
+      lastFrameCounter = state().frameCounter;
+      
+      // Debug output for secondary nodes
+      if (!isPrimary()) {
+        std::cout << "Secondary: Updated texture at frame " << state().frameCounter 
+                  << " time=" << state().time << " angle=" << state().angle << std::endl;
+      }
     }
   }
 
