@@ -1,272 +1,231 @@
-// Joel A. Jaffe 2025-07-19
-// Updated MAT-201B/Allorenz_JN/Allorenz_JN.cpp 
-// to work distributed and with real-time audio input
+/*
+Allocore Example: Networked Texture
 
-// Single macro to switch between desktop and Allosphere configurations
-// #define DESKTOP
+Description:
+This demonstrates how to distribute texture data across nodes using POD state.
+The primary node manipulates texture data and pushes it to the state, while
+secondary nodes read the texture from state and display it.
 
-#ifdef DESKTOP
-  // Desktop configuration
-  #define SAMPLE_RATE 48000
-  #define AUDIO_CONFIG SAMPLE_RATE, 128, 2, 8
-  #define SPATIALIZER_TYPE al::AmbisonicsSpatializer
-  #define SPEAKER_LAYOUT al::StereoSpeakerLayout()
-#else
-  // Allosphere configuration
-  #define SAMPLE_RATE 44100
-  #define AUDIO_CONFIG SAMPLE_RATE, 256, 60, 9
-  #define SPATIALIZER_TYPE al::Dbap
-  #define SPEAKER_LAYOUT al::AlloSphereSpeakerLayoutCompensated()
-#endif
+Modified from Frame Feedback example by:
+Lance Putnam, Nov. 2014
+Keehong Youn, 2017
+*/
 
-#include <cstdio>  // for printing to stdout
-#include "al/app/al_App.hpp"
+#include <iostream>
+#include <cmath>
 #include "al/app/al_DistributedApp.hpp"
-#include "al/app/al_GUIDomain.hpp"
-#include "al/graphics/al_Shapes.hpp"
-#include "al/io/al_AudioIO.hpp"
-#include "al/math/al_Random.hpp"
-#include "al/scene/al_DistributedScene.hpp"
-#include "al/scene/al_PolySynth.hpp"
-#include "al/scene/al_SynthSequencer.hpp"
-#include "al/ui/al_ControlGUI.hpp"
-#include "al/ui/al_Parameter.hpp"
+#include "al/graphics/al_Texture.hpp"
+#include "al_ext/statedistribution/al_CuttleboneDomain.hpp"
+#include "al_ext/statedistribution/al_CuttleboneStateSimulationDomain.hpp"
+
 using namespace al;
 
-#include "../gimmel/include/gimmel.hpp"
+// Define texture dimensions (must be reasonable size for network transmission)
+constexpr int TEX_WIDTH = 128;
+constexpr int TEX_HEIGHT = 128;
+constexpr int TEX_SIZE = TEX_WIDTH * TEX_HEIGHT * 3; // RGB format
 
-class Attractor : public PositionedVoice {
-private:
-  static const int P = 15, D = 10;
-  Parameter p[P]{
-    {"N", "p", 10000, 0, 20000},    // p[0] = N     | (simulation steps)
-    {"h", "p", 0.01, 0, 0.018},     // p[1] = h     | (simulation time step)
-    {"x0", "p", 0, -D, D},          // p[2] = x0    | initial
-    {"y0", "p", 0.1, -D, D},        // p[3] = y0    | conditions
-    {"z0", "p", 0, -D, D},          // p[4] = z0    |
-    {"rho", "p", 28, 0, 56},        // p[5] = rho   | simulation
-    {"sigma", "p", 10, 0, 20},      // p[6] = sigma | parameters
-    {"beta", "p", 8.0f / 3, 0, 4},  // p[7] = beta  |
-    {"a", "p", 5, -D, 60},          // p[8] = a     |
-    {"b", "p", -10, -D, D},         // p[9] = b     |
-    {"c", "p", -10, -D, D},         // p[10] = c    |
-    {"d", "p", -10, -D, D},         // p[11] = d    |
-    {"e", "p", -10, -D, D},         // p[12] = e    |
-    {"o", "p", -10, -D, D},         // p[13] = o    |
-    {"g", "p", -10, -D, D},         // p[14] = g    |
-  };
-
-  Parameter width {"width", "", 0.07, 0, 0.2};
-  Parameter gain {"gain", "", -90, -90, 0};
-  ParameterBool light {"light", "", false};  // switch light
-  ParameterInt mode {"mode", "", 0, 0, 3};
-  Mesh system, point;
-
-public:
-
-  void init() override {
-    for (int i = 0; i < P; i++) {
-      this->registerParameter(p[i]);
-    }
-    this->registerParameters(width, gain, light, mode);
-  }
-
-  void setMode(int desiredMode) {
-    this->mode = desiredMode;
-  }
-
-  void toggleLight() {
-    this->light = !this->light;
-  }
-
-  void update(double dt) override {
-    system.reset();
-    system.primitive(Mesh::LINE_STRIP);  // defines the nature of the drawn
-    system.vertex(p[2], p[3], p[4]);
-
-    for (int i = 0; i < (int)p[0]; i++) {  // draw a point for each iteration
-      Vec3f _(system.vertices().back());
-
-      if (mode == 0) {
-        // Allotsucs, based on the Den Tsucs Attractor by Paul Bourke
-        float a(p[8]), c(p[10]), e(p[12]), o(p[14]);
-        float h(p[1]);
-        Vec3f f((a * (_.y - _.x)) + (_.x * _.z),  //
-                (o * _.y) - (_.x * _.z),          //
-                (c * _.z) + (_.x * _.y) - (e * pow(_.x, 2)));
-        system.vertex(_ + h * f);
-        // the line above is Euler's method! */
-      }
-
-      if (mode == 1) {
-        // Lorenz
-        float rho(p[5]), sigma(p[6]), beta(p[7]), h(p[1]);
-        Vec3f f(sigma * (_.y - _.x),      //
-                _.x * (rho - _.z) - _.y,  //
-                _.x * _.y - beta * _.z);
-        system.vertex(_ + h * f);
-        // the line above is Euler's method!
-      }
-
-      if (mode == 2) {
-        // Allorenz
-        float rho(p[5]), sigma(p[6]), beta(p[7]), h(p[1]);  // a, b, c
-        Vec3f f(_.y * _.z,          // main equation
-                rho * (_.x - _.y),  // main equation
-                sigma - beta * _.x * _.y - (1 - beta) * pow(_.x, 2));  // main
-        system.vertex(_ + h * f);
-        // the line above is Euler's method!
-      }
-
-      if (mode == 3) {
-        // Allorenz. Based on the Chen - Lee Attractor
-        float a(p[8]), b(p[9]), d(p[11]), h(p[1]);  // a, c, d, e, f
-        Vec3f f((a * _.x) - (_.y * _.z), (_.y * b) + (_.x * _.z),
-                (d * _.z) + (_.x * _.y / 3));
-
-        system.vertex(_ + h * f);
-        // the line above is Euler's method!
-      }
-    }
-
-    system.ribbonize(width, true);
-    system.primitive(Mesh::TRIANGLE_STRIP);
-    system.generateNormals();
-  }
-
-  void onProcess(Graphics& g) override {
-    g.depthTesting(light);
-    g.lighting(light);
-    g.blendTrans();
-    g.color(1);
-    g.scale(0.1);
-    g.draw(system);
-  }
+// POD state struct for networked texture data
+struct TextureState {
+  float time;                               // Animation time
+  float angle;                              // Rotation angle
+  unsigned char textureData[TEX_SIZE];      // Raw texture data (RGB)
+  bool textureNeedsUpdate;                  // Flag to signal texture update
+  int frameCounter;                         // Frame counter for debugging
 };
 
-struct MyApp : public DistributedApp {  // use simple app if not distributed
-  PresetHandler presetHandler{"presets"};
-  DistributedScene scene;
-  Attractor* mAttractor = nullptr;
-
-  giml::Vactrol<float> mVactrol{SAMPLE_RATE};
+struct MyApp : public DistributedAppWithState<TextureState> {
+  Mesh shape;
+  Texture texBlur;
+  Texture distributedTexture;  // Texture for displaying networked data
 
   void onInit() override {
-    scene.registerSynthClass<Attractor>();
-    scene.verbose(true);
-    this->registerDynamicScene(scene);
+    auto cuttleboneDomain =
+      CuttleboneStateSimulationDomain<TextureState>::enableCuttlebone(this);
+    if (!cuttleboneDomain) {
+      std::cerr << "ERROR: Could not start Cuttlebone. Quitting." << std::endl;
+      quit();
+    }    
   }
 
   void onCreate() override {
+    // Create a colored square
+    shape.primitive(Mesh::LINE_LOOP);
+    const int N = 4;
+    for (int i = 0; i < N; ++i) {
+      float theta = float(i) / N * 2 * M_PI;
+      shape.vertex(cos(theta), sin(theta));
+      shape.color(HSV(theta / 2 / M_PI));
+    }
+
+    texBlur.filter(Texture::LINEAR);
+    
+    // Initialize distributed texture
+    distributedTexture.create2D(TEX_WIDTH, TEX_HEIGHT, Texture::RGB8);
+    distributedTexture.filter(Texture::LINEAR);
+    
+    // Initialize state (only on primary)
     if (isPrimary()) {
-      nav().pos(0, 0, 10);
-    } else {
-      nav().pos(0.101748, 0, 1.15022);
-      // nav().pos(-0.0081142, -0.0123074, 0.973139); // alt
+      state().time = 0.0f;
+      state().angle = 0.0f;
+      state().textureNeedsUpdate = false;
+      state().frameCounter = 0;
+      generateTextureData();
     }
   }
 
-  void onSound(AudioIOData& io) override {
-    if (isPrimary()) {
-      for (auto sample = 0; sample < io.framesPerBuffer(); sample++) {
-        float in = io.in(0, sample);
-        float rectfied = abs(in);
-        float filtered = mVactrol(rectfied);
-
-        // "double warp"
-        filtered = std::log10((filtered * 9.0f) + 1.0f); // basic curve 
-        filtered = std::sqrt(filtered);  // ^0.5, general form is ^(1 / sensitivity)
-
-
-        // float scaled = giml::scale(filtered, 0, 1, 0.0, 0.007); // map to frequency range
-        if (mAttractor) {
-          auto params = mAttractor->parameters();
-          for (auto param : params) {
-            if (param->getName() == std::string("h")) {
-              auto param_cast = dynamic_cast<Parameter*>(param);
-              float scaledFor_h = giml::scale(filtered, 0, 1, 0.0, 0.007); // map to frequency range
-              *param_cast = scaledFor_h;
-            }
-          }
-        }
-
-        // "multi-stereo" output
-        for (auto channel = 0; channel < io.channelsOut(); channel++) {
-          if (channel % 2 == 0) {
-            io.out(channel, sample) = io.in(0, sample);
-          } else {
-            io.out(channel, sample) = io.in(1, sample);
-          }
-          
-        }
+  void generateTextureData() {
+    // Generate procedural texture data based on current state
+    float t = state().time;
+    float rotation = state().angle * M_PI / 180.0f;
+    
+    for (int y = 0; y < TEX_HEIGHT; ++y) {
+      for (int x = 0; x < TEX_WIDTH; ++x) {
+        int index = (y * TEX_WIDTH + x) * 3;
+        
+        // Normalized coordinates [-1, 1]
+        float nx = (float(x) / float(TEX_WIDTH - 1)) * 2.0f - 1.0f;
+        float ny = (float(y) / float(TEX_HEIGHT - 1)) * 2.0f - 1.0f;
+        
+        // Apply rotation to coordinates
+        float rx = nx * cos(rotation) - ny * sin(rotation);
+        float ry = nx * sin(rotation) + ny * cos(rotation);
+        
+        // Generate animated patterns
+        float wave1 = sin(rx * 8.0f + t * 2.0f) * 0.5f + 0.5f;
+        float wave2 = cos(ry * 6.0f + t * 1.5f) * 0.5f + 0.5f;
+        float radial = sqrt(rx * rx + ry * ry);
+        float ripple = sin(radial * 10.0f - t * 4.0f) * 0.5f + 0.5f;
+        
+        // Create spiral pattern
+        float spiral = atan2(ry, rx) + radial * 3.0f - t * 2.0f;
+        float spiralPattern = sin(spiral) * 0.5f + 0.5f;
+        
+        // Combine patterns
+        float r = wave1 * ripple * spiralPattern;
+        float g = wave2 * (1.0f - radial * 0.3f);
+        float b = (wave1 + wave2) * 0.5f * ripple;
+        
+        // Add some noise based on frame counter for variation
+        float noise = sin(float(state().frameCounter) * 0.1f + rx * ry * 100.0f) * 0.1f;
+        r += noise; g += noise; b += noise;
+        
+        // Clamp and convert to byte values
+        r = fmax(0.0f, fmin(1.0f, r));
+        g = fmax(0.0f, fmin(1.0f, g));
+        b = fmax(0.0f, fmin(1.0f, b));
+        
+        state().textureData[index + 0] = (unsigned char)(r * 255.0f);
+        state().textureData[index + 1] = (unsigned char)(g * 255.0f);
+        state().textureData[index + 2] = (unsigned char)(b * 255.0f);
       }
     }
+    
+    state().textureNeedsUpdate = true;
   }
 
-  void onAnimate(double dt) override { 
-    scene.update(dt); 
-
-    if (!isPrimary()) {
-      // Rotate camera around Y axis for non-primary nodes
-      nav().turnU(dt * 18.f / 60.f); // turnU rotates around up vector (Y axis)
+  void onAnimate(double dt_sec) override {
+    if (isPrimary()) {
+      // Update animation time and angle
+      state().time += dt_sec;
+      state().angle += dt_sec * 90.0f;
+      if (state().angle >= 360.0f) state().angle -= 360.0f;
+      
+      // Generate new texture data periodically
+      state().frameCounter++;
+      if (state().frameCounter % 6 == 0) { // Update every 6 frames (~10 FPS at 60 FPS)
+        generateTextureData();
+      }
+    }
+    
+    // Update distributed texture on all nodes when needed
+    if (state().textureNeedsUpdate) {
+      distributedTexture.submit(state().textureData, GL_RGB, GL_UNSIGNED_BYTE);
+      state().textureNeedsUpdate = false;
     }
   }
 
   void onDraw(Graphics& g) override {
     g.clear(0);
 
-    // draw system if it exists
-    scene.render(g);
-  }
-
-  bool onKeyDown(const Keyboard& k) override {
     if (isPrimary()) {
-      if (!mAttractor) {
-        if (k.key() == ' ') {
-          std::cout << "Making an attractor!" << std::endl;
-          mAttractor = scene.getVoice<Attractor>();
-          scene.triggerOn(mAttractor);
-          auto GUIdomain = GUIDomain::enableGUI(defaultWindowDomain());
-          auto& gui = GUIdomain->newGUI();
-          gui.add(presetHandler);
+      // Primary: Generate feedback effect with manipulated texture
+      
+      // 1. Match texture dimensions to window
+      texBlur.resize(fbWidth(), fbHeight());
 
-          auto params = mAttractor->parameters();
-          for (auto& param : params) {
-            gui.add(*param);
-            presetHandler << *param;
-          }
+      // 2. Draw feedback texture with manipulation
+      g.tint(0.98);
+      g.quadViewport(texBlur, -1.005, -1.005, 2.01, 2.01);  // Outward expansion
+      g.tint(1);  // reset tint
 
-          presetHandler.recallPresetSynchronous(7);  // initial condition on startup, how to make autocue?
-          std::cout << "Finished making attractor!" << std::endl;
-        }
-      } else {
-        if (k.key() == 'l') {
-          mAttractor->toggleLight();
-        }
-        else if (isPrimary() && k.key() == '0') {
-          mAttractor->setMode(0);
-        }
-        else if (isPrimary() && k.key() == '1') {
-          mAttractor->setMode(1);
-        }
-        else if (isPrimary() && k.key() == '2') {
-          mAttractor->setMode(2);
-        }
-        else if (isPrimary() && k.key() == '3') {
-          mAttractor->setMode(3);
-        }
-      }
+      // 3. Draw the animated shape
+      g.camera(Viewpoint::UNIT_ORTHO);
+      g.pushMatrix();
+      g.rotate(state().angle * M_PI / 180.0f, 0, 0, 1);
+      g.meshColor();
+      g.draw(shape);
+      g.popMatrix();
+
+      // 4. Draw the distributed texture as overlay (semi-transparent)
+      g.tint(0.5);
+      g.quadViewport(distributedTexture, -0.3, -0.3, 0.6, 0.6);
+      g.tint(1);
+
+      // 5. Copy current frame buffer to feedback texture
+      texBlur.copyFrameBuffer();
+      
+    } else {
+      // Secondary: Display only the distributed texture
+      g.camera(Viewpoint::UNIT_ORTHO);
+      
+      // Display the networked texture full screen
+      g.quadViewport(distributedTexture, -1, -1, 2, 2);
+      
+      // Optionally overlay some info or additional graphics
+      g.pushMatrix();
+      g.rotate(state().angle * M_PI / 180.0f, 0, 0, 1);
+      g.scale(0.3);
+      g.meshColor();
+      g.draw(shape);
+      g.popMatrix();
     }
-    if (k.key() == 'p') {
-      std::cout << "Position: " << this->nav().pos() << std::endl;
+  }
+  
+  bool onKeyDown(Keyboard const& k) override {
+    if (isPrimary()) {
+      switch (k.key()) {
+        case '1':
+          // Faster animation
+          break;
+        case '2': 
+          // Reset animation
+          state().time = 0.0f;
+          state().angle = 0.0f;
+          state().frameCounter = 0;
+          break;
+        case ' ':
+          // Force texture regeneration
+          generateTextureData();
+          break;
+      }
     }
     return true;
   }
-
 };
 
 int main() {
   MyApp app;
-  app.configureAudio(AUDIO_CONFIG);
+  
+  // Set window properties
+  app.dimensions(800, 600);
+  app.title("Networked Texture Demo");
+  
+  std::cout << "Controls (Primary only):" << std::endl;
+  std::cout << "  2 - Reset animation" << std::endl;
+  std::cout << "  Space - Force texture update" << std::endl;
+  
   app.start();
+  
+  return 0;
 }
